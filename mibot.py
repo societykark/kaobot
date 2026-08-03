@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import aiohttp
-import json
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
@@ -45,12 +44,12 @@ Soy tu asistente virtual con personalidad de anime. Estoy aquí para ayudarte, c
 
 ¡Elige una opción abajo o escríbeme lo que quieras! 🌟"""
 
-# ========== MODELOS GRATIS EN OPENROUTER ==========
+# ========== MODELOS GRATIS ACTUALIZADOS (JULIO 2026) ==========
 MODELOS = {
-    "1": {"id": "google/gemini-2.0-flash-exp:free", "nombre": "💎 Gemini 2.0 Flash", "desc": "Multimodal y rápido"},
-    "2": {"id": "deepseek/deepseek-v4-flash:free", "nombre": "🌀 DeepSeek V4", "desc": "Muy inteligente y gratis"},
-    "3": {"id": "meta-llama/llama-3.2-3b-instruct:free", "nombre": "🦙 Llama 3.2 3B", "desc": "Rápido y confiable"},
-    "4": {"id": "nvidia/nemotron-3-super-120b-a12b:free", "nombre": "⚡ NVIDIA Nemotron 3", "desc": "Potente y con gran contexto"},
+    "1": {"id": "nvidia/nemotron-3-super-120b-a12b:free", "nombre": "⚡ NVIDIA Nemotron 3", "desc": "120B params, 1M contexto"},
+    "2": {"id": "meta-llama/llama-3.2-3b-instruct:free", "nombre": "🦙 Llama 3.2 3B", "desc": "Rápido y confiable"},
+    "3": {"id": "mistralai/mistral-7b-instruct:free", "nombre": "🌀 Mistral 7B", "desc": "Open-source y probado"},
+    "4": {"id": "google/gemma-4-31b-instruct:free", "nombre": "💎 Gemma 4 31B", "desc": "Multimodal, 256K contexto"},
 }
 MODELO_DEFECTO = MODELOS["1"]["id"]
 
@@ -96,8 +95,8 @@ async def preguntar_ai(prompt, chat_id, reintentos=2):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90) as resp:
-                    data = await resp.json()
                     if resp.status == 200:
+                        data = await resp.json()
                         reply = data["choices"][0]["message"]["content"].strip()
                         usuario["historial"].append({"role": "user", "content": prompt})
                         usuario["historial"].append({"role": "assistant", "content": reply})
@@ -105,11 +104,12 @@ async def preguntar_ai(prompt, chat_id, reintentos=2):
                             usuario["historial"] = usuario["historial"][-20:]
                         return reply
                     else:
-                        error = data.get("error", {}).get("message", "Error desconocido")
-                        if "rate limit" in error.lower() and intento < reintentos:
+                        error_data = await resp.text()
+                        logger.error(f"Error {resp.status}: {error_data}")
+                        if intento < reintentos:
                             await asyncio.sleep(2 ** intento)
                             continue
-                        return f"❌ Error {resp.status}: {error}"
+                        return f"❌ Error {resp.status}: {error_data[:100]}"
         except asyncio.TimeoutError:
             if intento < reintentos:
                 await asyncio.sleep(2)
@@ -123,7 +123,7 @@ async def preguntar_ai(prompt, chat_id, reintentos=2):
             return f"❌ Error inesperado: {str(e)[:100]}"
     return "❌ No se pudo obtener respuesta después de varios intentos, nya~"
 
-# ========== ENVIAR RESPUESTA LARGA (SIN CORTES) ==========
+# ========== ENVIAR RESPUESTA LARGA ==========
 async def enviar_respuesta(update, texto):
     if len(texto) <= 4000:
         await update.message.reply_text(texto, parse_mode=ParseMode.MARKDOWN)
@@ -253,12 +253,13 @@ async def sobre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=menu_principal()
     )
 
-# ========== CALLBACKS PARA BOTONES ==========
+# ========== CALLBACKS PARA BOTONES (ARREGLADO) ==========
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chat_id = update.effective_chat.id
     data = query.data
+    logger.info(f"📩 Callback recibido: {data}")
     
     if data == "menu":
         await query.edit_message_text(SALUDO, parse_mode=ParseMode.MARKDOWN, reply_markup=menu_principal())
@@ -330,15 +331,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # ========== CAMBIO DE MODELO (ARREGLADO) ==========
     if data.startswith("mod_"):
         key = data.split("_")[1]
         if key in MODELOS:
             usuario = obtener_usuario(chat_id)
             usuario["modelo"] = MODELOS[key]["id"]
+            logger.info(f"✅ Modelo cambiado a: {MODELOS[key]['nombre']}")
             await query.edit_message_text(
                 f"✅ *Modelo cambiado a:* {MODELOS[key]['nombre']} ✨\n\n"
                 f"Descripción: {MODELOS[key]['desc']}\n"
                 f"¡Ahora puedes seguir conversando, nya~! 🐱",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=menu_principal()
+            )
+        else:
+            await query.edit_message_text(
+                "❌ Modelo no válido, nya~",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=menu_principal()
             )
