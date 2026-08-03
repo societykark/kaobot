@@ -2,7 +2,10 @@ import os
 import logging
 import asyncio
 import aiohttp
+import json
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -11,8 +14,10 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 TOKEN = os.environ.get("TOKEN")
 OPENROUTER_KEY = os.environ.get("OPENROUTER_KEY")
 
-if not TOKEN or not OPENROUTER_KEY:
-    raise ValueError("❌ Faltan TOKEN o OPENROUTER_KEY en variables de entorno")
+if not TOKEN:
+    raise ValueError("❌ TOKEN no configurado")
+if not OPENROUTER_KEY:
+    raise ValueError("❌ OPENROUTER_KEY no configurada")
 
 # ========== PERSONALIDAD KAORI-CHAN ==========
 PERSONALIDAD = """Eres Kaori-chan, una asistente virtual con personalidad de anime, súper kawaii y alegre. 
@@ -361,8 +366,25 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu_principal()
         )
 
+# ========== SERVIDOR HTTP PARA RENDER ==========
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_http_server():
+    server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
+    server.serve_forever()
+
 # ========== MAIN ==========
 def main():
+    # Iniciar servidor HTTP en un hilo separado
+    thread = Thread(target=run_http_server, daemon=True)
+    thread.start()
+    logger.info("✅ Servidor HTTP en puerto 8080 para health checks")
+    
+    # Iniciar bot de Telegram
     app = Application.builder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -376,7 +398,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     
-    print("✅ Kaori-chan AI iniciado correctamente, nya~ 🐱")
+    logger.info("✅ Kaori-chan AI iniciado correctamente, nya~ 🐱")
     app.run_polling()
 
 if __name__ == "__main__":
